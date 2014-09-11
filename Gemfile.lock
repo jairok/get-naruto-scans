@@ -1,0 +1,17 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    colorize (0.7.3)
+    fileutils (0.7)
+      rmagick (>= 2.13.1)
+    rmagick (2.13.3)
+    zip (2.0.2)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  colorize
+  fileutils
+  rmagick
+  zip

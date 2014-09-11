@@ -11,6 +11,7 @@ require 'fileutils'
 require 'open-uri'
 require 'zip/zipfilesystem'
 require 'yaml'
+require 'colorize'
 
 SETTINGS_FILE = "settings.yml"
 LATEST_CHAPTER_DOWNLOADED_FILE = "latest_chapter_downloaded.yml"
@@ -32,7 +33,6 @@ def download_file(remote_url,local_url)
   begin
     stream = open(remote_url).read
   rescue OpenURI::HTTPError => e
-    puts "\tError: #{e}"
     raise e
   else
     File.open(local_url, 'wb'){ |file| file.write(stream)}
@@ -42,7 +42,6 @@ end
 
 ## Unzip a zip file to a destination folder
 def unzip_file(zip_path, destination_folder)
-  puts "Unzipping #{zip_path}..."
   begin
     ensure_folder_exists(destination_folder)
     
@@ -54,7 +53,6 @@ def unzip_file(zip_path, destination_folder)
      }
     }
   rescue StandardError => e
-    puts "\tError: #{e}"
     raise e
   else
     FileUtils.rm_rf(zip_path) 
@@ -74,7 +72,6 @@ def convert_to_pdf(images_folder, pdf_file_path)
     
     `/usr/local/bin/convert #{files_list} #{pdf_file_path}`
     rescue StandardError => e
-      puts "\tError: #{e}"
       raise e
     else
       FileUtils.rm_rf(images_folder)
@@ -87,6 +84,8 @@ def load_settings()
   settings = File.exists?(SETTINGS_FILE) ? YAML.load_file(SETTINGS_FILE):{"settings" => {}}
   download_folder = settings["settings"]["download_folder"]
   $download_folder = !download_folder.to_s == '' ? download_folder : DOWNLOAD_FOLDER_DEFAULT
+  verbose = settings["settings"]["verbose"]
+  $verbose = verbose == 'yes' ? true : false
 end
 
 ## Load the latest chapter downloaded
@@ -109,50 +108,72 @@ end
 
 $download_folder
 $latest_chapter_downloaded
+$verbose
 
-# Load settings and latest chapter downloaded
-load_settings()
-load_latest_chapter_downloaded()
+begin
+    # Load settings and latest chapter downloaded
+    load_settings()
+    load_latest_chapter_downloaded()
+    
+    # Ensure the download folder exists
+    ensure_folder_exists($download_folder)
+rescue StandardError => e
+    puts "#{e}".red
+    abort
+end
 
-puts "Starting downloading Naruto's scans..."
-
-# Ensure the download folder exists
-ensure_folder_exists($download_folder)
+puts "Starting downloading Naruto's scans"
+puts "==================================="
 
 latest_chapter_downloaded_index = $latest_chapter_downloaded.to_i
 next_chapter_to_download_index = latest_chapter_downloaded_index + 1
+retry_counter = 0;
 
 loop do
   begin
     next_chapter_to_download = next_chapter_to_download_index.to_s
     
-    # Downloads the scan
+    # Increment the retry counter each time the loop begin
+    # and reset it at the end of the loop.
+    retry_counter += 1 
+    
+    # Download the scan
     remote_zip_url = File.join(REMOTE_URL, next_chapter_to_download) + FILE_FORMAT
     local_zip_path = File.join($download_folder, next_chapter_to_download) + FILE_FORMAT
     download_file(remote_zip_url, local_zip_path) unless File.exists?local_zip_path
 
-    # Unzips the scan
+    # Unzip the scan
     unzip_folder_path = File.join($download_folder, next_chapter_to_download)
     unzip_file(local_zip_path, unzip_folder_path) if File.exists?local_zip_path
 
-    # Creates the pdf from the scan's images
+    # Create the pdf from the scan's images
     pdf_file_path = unzip_folder_path + ".pdf"
     convert_to_pdf(unzip_folder_path, pdf_file_path)
     
-    # Saves the scan number as the latest downloaded into the file
+    # Save the scan number as the latest downloaded into the file
     latest_chapter_downloaded_index = next_chapter_to_download_index
     write_latest_chapter_downloaded(latest_chapter_downloaded_index)
-    
-    # And increments before continuing ...
+  
+    # Increment before continuing ...
     next_chapter_to_download_index += 1
     
+    # Reset the retry counter
+    retry_counter = 0
+    
+    puts "Episode \##{latest_chapter_downloaded_index} done".green
+    
   rescue OpenURI::HTTPError => e
+      puts "\tError: #{e}".red unless $verbose == false
       if "#{e.io.status[0]}" == "404"
-        puts "Obviously, the scan #{latest_chapter_downloaded_index} was the latest."
-        puts "Othwerwhise, try to adjust the 'latest_chapter_downloaded' setting."
+        puts "Obviously, the episode #{latest_chapter_downloaded_index} was the latest.".red
+        puts "Otherwise, try to adjust the chapter number in latest_chapter_downloaded.yml".yellow
         break
       end
   rescue StandardError => e
-      puts "\tError: #{e}"
+      puts "\tError: #{e}".red unless $verbose == false
+      if retry_counter >= 3
+        puts "Too many errors to continue, please check the trace.".red
+        break
+      end
   end
 end
